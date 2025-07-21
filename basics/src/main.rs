@@ -1,31 +1,55 @@
-use std::sync::Mutex;
 
-use actix_web::{web, App, HttpServer};
 
-// making this state sharable 
-struct AppStateWithCounter {
-    counter : Mutex<i32>
+use std::io::Result;
+
+use actix_files::NamedFile;
+use actix_session::{storage::CookieSessionStore, Session, SessionMiddleware};
+use actix_web::{get, http::{header::ContentType, StatusCode}, middleware, App, HttpRequest, HttpResponse, HttpServer, Responder, Result};
+
+#[get("/facvicon")]
+async fn facvicon() -> Result<impl Responder> {
+   Ok(NamedFile::open("static/favicon.png"))
 }
 
-async fn index(data : web::Data<AppStateWithCounter>) -> String {
-    let mut counter = data.counter.lock().unwrap();
-    *counter += 1;
-    format!("the requested number:{counter}")
+#[get("/welcome")]
+async fn welcome(req : HttpRequest,session : Session) -> Result<impl Responder> {
+    println!("{req:?}");
+
+    let mut counter = 1;
+    if let Some(count) = session.get::<i32>("counter")? {
+        println!("Session value : {counter}");
+        counter = counter + 1;
+    };
+    session.insert("counter",counter);
+
+    Ok(HttpResponse::build(StatusCode::OK)
+    .content_type(ContentType::plaintext())
+    .body(include_str!("../static/welcome.html"))
+)
+
 }
+const SESSION_SIGNING_KEY : &[u8] = &[0; 64];
+
 
 #[actix_web::main]
-async fn main() -> std::io::Result<()> {
+async fn main() -> Result<()>{
 
-    let counter = web::Data::new(AppStateWithCounter {
-        counter: Mutex::new(0)
-    });
+let key = actix_web::cookie::Key::from(SESSION_SIGNING_KEY);
+  
+   HttpServer::new(move || {
+    App::new()
+    .wrap(middleware::Compress::default())
+    .wrap(
+        SessionMiddleware::builder(CookieSessionStore::default(), key.clone())
+        .cookie_secure(false)
+        .build(),
+    )
+    .wrap(
+        middleware::Logger::default().log_target("@"))
+   })
 
-    HttpServer::new(move || {
-        App::new().service(
-            web::scope("/app").app_data(counter.clone()).route("/count", web::get().to(index))
-        )
-    }).bind(("localhost",8081))?.run().await
+   .bind(("localhost",8081))?
+   .run()
+   .await
+
 }
-
-
-// web::scope is similar to the app.use("/",_) in ts
